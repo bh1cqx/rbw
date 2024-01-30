@@ -589,6 +589,11 @@ fn val_display_or_store(clipboard: bool, password: &str) -> bool {
     }
 }
 
+pub enum EntryType {
+    Login,
+    SecureNote,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 #[cfg_attr(test, derive(Eq, PartialEq))]
@@ -924,6 +929,7 @@ pub fn code(
 }
 
 pub fn add(
+    entry_type: EntryType,
     name: &str,
     username: Option<&str>,
     uris: &[(String, Option<rbw::api::UriMatchType>)],
@@ -943,9 +949,17 @@ pub fn add(
         .map(|username| crate::actions::encrypt(username, None))
         .transpose()?;
 
-    let contents = rbw::edit::edit("", HELP_PW)?;
+    let needs_password = match entry_type {
+        EntryType::Login => true,
+        EntryType::SecureNote => false,
+    };
 
-    let (password, notes) = parse_editor(&contents);
+    let contents = rbw::edit::edit(
+        "",
+        if needs_password { HELP_PW } else { HELP_NOTES },
+    )?;
+
+    let (password, notes) = parse_editor(&contents, needs_password);
     let password = password
         .map(|password| crate::actions::encrypt(&password, None))
         .transpose()?;
@@ -998,16 +1012,21 @@ pub fn add(
         }
     }
 
-    if let (Some(access_token), ()) = rbw::actions::add(
-        &access_token,
-        refresh_token,
-        &name,
-        &rbw::db::EntryData::Login {
+    let data = match entry_type {
+        EntryType::Login => rbw::db::EntryData::Login {
             username,
             password,
             uris,
             totp: None,
         },
+        EntryType::SecureNote => rbw::db::EntryData::SecureNote {},
+    };
+
+    if let (Some(access_token), ()) = rbw::actions::add(
+        &access_token,
+        refresh_token,
+        &name,
+        &data,
         notes.as_deref(),
         folder_id.as_deref(),
     )? {
@@ -1146,7 +1165,7 @@ pub fn edit(
 
             let contents = rbw::edit::edit(&contents, HELP_NOTES)?;
 
-            let (password, notes) = parse_editor(&contents);
+            let (password, notes) = parse_editor(&contents, true);
             let password = password
                 .map(|password| {
                     crate::actions::encrypt(
@@ -1202,7 +1221,7 @@ pub fn edit(
             let contents = rbw::edit::edit(&editor_content, HELP_NOTES)?;
 
             // prepend blank line to be parsed as pw by `parse_editor`
-            let (_, notes) = parse_editor(&format!("\n{contents}\n"));
+            let (_, notes) = parse_editor(&contents, false);
 
             let notes = notes
                 .map(|notes| {
@@ -1753,10 +1772,16 @@ fn decrypt_cipher(entry: &rbw::db::Entry) -> anyhow::Result<DecryptedCipher> {
     })
 }
 
-fn parse_editor(contents: &str) -> (Option<String>, Option<String>) {
+fn parse_editor(
+    contents: &str,
+    first_line_as_password: bool,
+) -> (Option<String>, Option<String>) {
     let mut lines = contents.lines();
 
-    let password = lines.next().map(std::string::ToString::to_string);
+    let password = match first_line_as_password {
+        true => lines.next().map(std::string::ToString::to_string),
+        false => None,
+    };
 
     let mut notes: String = lines
         .skip_while(|line| line.is_empty())

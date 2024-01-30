@@ -113,6 +113,11 @@ enum Opt {
         user: Option<String>,
         #[arg(
             long,
+            help = "Type of the entry: Login (default), or SecureNote"
+        )]
+        r#type: Option<String>,
+        #[arg(
+            long,
             help = "URI for the password entry",
             number_of_values = 1
         )]
@@ -342,16 +347,28 @@ fn main() {
             user,
             uri,
             folder,
-        } => commands::add(
-            name,
-            user.as_deref(),
-            &uri.iter()
-                // XXX not sure what the ui for specifying the match type
-                // should be
-                .map(|uri| (uri.clone(), None))
-                .collect::<Vec<_>>(),
-            folder.as_deref(),
-        ),
+            r#type,
+        } => {
+            let entry_type_lowercase =
+                r#type.as_ref().map(|s| s.trim().to_lowercase());
+            let entry_type =
+                match entry_type_lowercase.as_ref().map(String::as_str) {
+                    Some("login") => commands::EntryType::Login,
+                    Some("securenote") => commands::EntryType::SecureNote,
+                    _ => commands::EntryType::Login,
+                };
+            commands::add(
+                entry_type,
+                name,
+                user.as_deref(),
+                &uri.iter()
+                    // XXX not sure what the ui for specifying the match type
+                    // should be
+                    .map(|uri| (uri.clone(), None))
+                    .collect::<Vec<_>>(),
+                folder.as_deref(),
+            )
+        }
         Opt::Generate {
             len,
             name,
